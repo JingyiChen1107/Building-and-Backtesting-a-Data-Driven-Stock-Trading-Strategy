@@ -1,0 +1,808 @@
+---
+title: "Final Presentation- Group 3"
+output: html_document
+html_document:
+    toc: true            
+    toc_float: true      
+    number_sections: true 
+    theme: cerulean      
+    highlight: tango    
+date: "2024-12-04"
+---
+
+```{=html}
+<style>
+h1 {
+  color: darkred; 
+}
+h2 {
+  color: darkred; 
+}
+h3 {
+  color: darkred; 
+}
+</style>
+```
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Initial Setup and Libraries
+
+```{r}
+library(dplyr)
+library(tidyverse)
+library(ggplot2)
+library(corrplot)
+library(quantmod)
+library(PerformanceAnalytics)
+library(zoo) 
+getwd()
+msft <- read.csv("MSFT.csv")
+aapl <- read.csv("AAPL.csv")
+```
+
+### Check colums in the datasets
+
+```{r}
+colnames(msft)
+colnames(aapl)
+```
+
+## Part 0. Cleaning
+
+### Remove Duplicate Rows
+
+```{r}
+# Remove duplicate rows from the 'msft' and 'aapl' data frame
+msft <- msft[!duplicated(msft), ]
+aapl <- aapl[!duplicated(aapl), ]
+
+# Identify rows that are duplicated in the 'msft' data frame
+duplicated_rows_msft <- msft[duplicated(msft) | duplicated(msft, fromLast = TRUE), ]
+# Print the rows in 'msft' that are duplicated
+print(duplicated_rows_msft)
+
+# Identify rows that are duplicated in the 'aapl' data frame
+duplicated_rows_aapl <- aapl[duplicated(aapl) | duplicated(aapl, fromLast = TRUE), ]
+# Print the rows in 'aapl' that are duplicated
+print(duplicated_rows_aapl)
+```
+
+### Handle Missing Values
+
+```{r}
+# Remove all rows in the 'msft' data frame that contain any missing values
+colSums(is.na(msft))
+msft <- na.omit(msft)
+# Remove all rows in the 'aapl' data frame that contain any missing values
+colSums(is.na(aapl))
+aapl <- na.omit(aapl)
+```
+
+### Check Consistency
+
+```{r}
+# Convert the 'date' column in the 'msft' data frame to Date format
+msft$date <- as.Date(msft$date, format="%Y-%m-%d")
+# Sort the 'msft' data frame by the 'date' column in ascending order
+msft <- msft[order(msft$date), ]
+
+# Convert the 'date' column in the 'aapl' data frame to Date format
+aapl$date <- as.Date(aapl$date, format="%Y-%m-%d")
+# Sort the 'aapl' data frame by the 'date' column in ascending order
+aapl <- aapl[order(aapl$date), ]
+```
+
+### Calculate Daily Returns
+
+```{r}
+# Calculate the daily return for the 'msft' data frame
+msft <- msft %>%
+  mutate(msft_daily_return = (PRC - OPENPRC) / OPENPRC)
+# Calculate the daily return for the 'aapl' data frame
+aapl <- aapl %>%
+  mutate(aapl_daily_return = (PRC - OPENPRC) / OPENPRC)
+```
+
+*Now onto the model building.*
+
+## Part 1. Model
+
+### Data Analysis
+
+#### 1) Data Visualization of Price and Return from Microsoft and Apple
+
+```{r}
+# Filter data for the years 2011-2015
+merged_data <- msft %>%
+  inner_join(aapl, by = "date", suffix = c("_msft", "_aapl"))
+
+# Check the structure of the merged data
+str(merged_data)
+training_data <- merged_data %>%
+  filter(year(date) >= 2011 & year(date) < 2015)
+
+# Create a custom theme for the plots
+my_theme <- theme_minimal() +
+  theme(
+    plot.title = element_text(size = 12, face = "bold"),
+    axis.title = element_text(size = 10),
+    axis.text = element_text(size = 8)
+  )
+
+# Create four plots
+p1 <- ggplot(training_data, aes(x = date, y = PRC_msft)) +
+  geom_line(color = "blue", linewidth = 0.8) +
+  geom_smooth(method='lm')+
+  labs(title = "Microsoft Stock Price (2011-2015)",
+       x = "Date",
+       y = "Close Price") +
+  my_theme
+
+p2 <- ggplot(training_data, aes(x = date, y = PRC_aapl)) +
+  geom_line(color = "red", linewidth = 0.8) +
+   geom_smooth(data = subset(training_data, date <= as.Date("2013-12-31")),
+              method = 'lm',
+              color = "red",)+
+  labs(title = "Apple Stock Price (2011-2015)",
+       x = "Date",
+       y = "Close Price") +
+  my_theme
+
+p3 <- ggplot(training_data, aes(x = date, y = RET_msft)) +
+  geom_line(color = "blue", linewidth = 0.8) +
+  labs(title = "Microsoft Daily Returns (2011-2015)",
+       x = "Date",
+       y = "Daily Returns") +
+  my_theme
+
+p4 <- ggplot(training_data, aes(x = date, y = RET_aapl)) +
+  geom_line(color = "red", linewidth = 0.8) +
+  labs(title = "Apple Daily Returns (2011-2015)",
+       x = "Date",
+       y = "Daily Returns") +
+  my_theme
+
+# Use grid.arrange to combine the four plots into a single layout
+library(gridExtra)
+grid.arrange(p1, p2, p3, p4, ncol = 2)
+```
+
+**Takeways:**
+
+1.  Microsoft's stock price and returns suggest stability and consistent growth.
+
+2.  The sudden drop in Apple's stock price (mid-2014) was due to a 1:7 stock split, not a drop in real value.
+
+#### 2） Correlation Analysis Between Microsoft VS Apple
+
+```{r}
+# Calculate the correlation coefficient for daily returns between Microsoft and Apple (2011-2015)
+correlation <- cor(training_data$RET_msft,
+                  training_data$RET_aapl,
+                  use = "complete.obs")
+
+# Create a scatter plot to visualize the correlation between Microsoft and Apple daily returns
+ggplot(training_data, aes(x = RET_msft, y = RET_aapl)) +
+  geom_point(alpha = 0.5, color = "blue") +
+  geom_smooth(method = "lm", color = "red") +
+  labs(title = "Microsoft vs Apple Daily Returns Correlation (2011-2015)",
+       x = "Microsoft Daily Returns",
+       y = "Apple Daily Returns") +
+  theme_minimal() +
+  annotate("text", 
+           x = max(training_data$RET_msft, na.rm = TRUE) * 0.8,
+           y = max(training_data$RET_aapl, na.rm = TRUE) * 0.8,
+           label = paste("Correlation:", round(correlation, 3)))
+```
+
+**Takeways**：
+
+1.  A positive linear relationship between the daily returns of Microsoft and Apple from 2011 to 2015.
+
+### Model Building
+
+#### 1）Factor Selection and Predictive Modeling
+
+```{r}
+# Build an extended factor pool and select predictive factors
+model_data <- training_data %>%
+  filter(year(date) >= 2011 & year(date) < 2015) %>% # Filter data between 2011 and 2014
+  arrange(date) %>%
+  mutate(
+    # 1. Define the target variable (next day's return)
+    next_return = lead(RET_msft, 1),
+    
+    # 2. MSFT-specific factors
+    # (2.1) Short-term momentum factors
+    ret_lag1 = lag(RET_msft, 1), # Lagged 1-period return
+    ret_lag2 = lag(RET_msft, 2), # Lagged 2-period return
+    ret_lag3 = lag(RET_msft, 3), # Lagged 3-period return
+    ret_lag5 = lag(RET_msft, 5), # Lagged 5-period return
+    
+    # (2.2) Cumulative return factors
+    ret_cum3 = rollsum(lag(RET_msft), k = 3, fill = NA), # 3-period cumulative return
+    ret_cum5 = rollsum(lag(RET_msft), k = 5, fill = NA), # 5-period cumulative return
+    ret_cum10 = rollsum(lag(RET_msft), k = 10, fill = NA), # 10-period cumulative return
+    
+    # (2.3) Moving average ratio factors
+    ma5_ratio = lag(PRC_msft/rollmean(PRC_msft, k = 5, fill = NA) - 1,1), # Ratio to 5-period moving average
+    ma10_ratio = lag(PRC_msft/rollmean(PRC_msft, k = 10, fill = NA) - 1,1), # Ratio to 10-period moving average
+    ma20_ratio = lag(PRC_msft/rollmean(PRC_msft, k = 20, fill = NA) - 1,1), # Ratio to 20-period moving average
+    
+    # (2.4) Volatility factors
+    vol_3d = lag(rollapply(RET_msft, width = 3, FUN = sd, fill = NA),1), # 3-period volatility
+    vol_5d = lag(rollapply(RET_msft, width = 5, FUN = sd, fill = NA),1), # 5-period volatility
+    vol_10d = lag(rollapply(RET_msft, width = 10, FUN = sd, fill = NA),1), # 10-period volatility
+    
+     # (2.5) Volume-related factors
+    vol_ratio = lag(VOL_msft/rollmean(VOL_msft, k = 20, fill = NA),1),  # Volume ratio to 20-period moving average
+    vol_trend = lag(rollmean(VOL_msft, k = 5, fill = NA)/rollmean(VOL_msft, k = 20, fill = NA),1),# Volume trend factor
+    
+    # 3. Market-related factors
+    market_lag1 = lag(sprtrn_msft, 1), # Lagged 1-period market return
+    market_lag2 = lag(sprtrn_msft, 2), # Lagged 2-period market return
+    market_cum3 = rollsum(lag(sprtrn_msft), k = 3, fill = NA), # 3-period cumulative market return
+    
+    # 4. Peer-related factors (e.g., AAPL as a peer company)
+    aapl_lag1 = lag(RET_aapl, 1),
+    aapl_cum3 = rollsum(lag(RET_aapl), k = 3, fill = NA)
+   
+  ) %>%
+  na.omit()
+
+# # Create a list of all factor names
+factors <- c("ret_lag1", "ret_lag2", "ret_lag3", "ret_lag5",
+             "ret_cum3", "ret_cum5", "ret_cum10",
+             "ma5_ratio", "ma10_ratio", "ma20_ratio",
+             "vol_3d", "vol_5d", "vol_10d",
+             "vol_ratio", "vol_trend",
+             "market_lag1", "market_lag2", "market_cum3",
+             "aapl_lag1", "aapl_cum3")
+
+# Calculate the correlation between each factor and the target variable
+correlations <- cor(model_data[factors], model_data$next_return)
+
+# Calculate the correlation matrix between factors
+factor_cor_matrix <- cor(model_data[factors])
+
+# Select significant factors based on their correlation with the target variable
+significant_factors <- factors[abs(correlations) > 0.05]  # Threshold for significance is 0.05
+
+# Filter factors to remove highly correlated ones
+final_factors <- c()
+correlation_threshold <- 0.5  # Threshold for inter-factor correlation
+
+for(factor in significant_factors) {
+  #Check if the current factor is highly correlated with already selected factors
+  if(length(final_factors) == 0) {
+    final_factors <- c(final_factors, factor) # Add the first factor
+  } else {
+    correlations_with_selected <- abs(factor_cor_matrix[factor, final_factors])
+    if(all(correlations_with_selected < correlation_threshold)) {
+      final_factors <- c(final_factors, factor) # Add factor if correlations are below the threshold
+    }
+  }
+}
+
+# Build the final regression formula
+formula <- as.formula(paste("next_return ~", paste(final_factors, collapse = " + ")))
+
+# Fit the linear regression model using the selected factors
+final_model <- lm(formula, data = model_data)
+
+# Display the summary of the regression model
+summary(final_model)
+```
+
+**Takeways**：
+
+1.  Significant Predictors:
+
+    ret_cum5 (5-period cumulative return)
+
+    ma5_ratio (5-period moving average ratio)
+
+    aapl_cum3 (3-period cumulative return of AAPL)
+
+2.  Non-Significant Predictors:
+
+    vol_trend (volume trend)
+
+3.  The moderate R-squared suggests that additional factors might improve the model's explanatory power.
+
+#### 2）Final Model Building
+
+```{r}
+# Build predictive factors and construct the regression model
+model_data <- training_data %>%
+  filter(year(date) >= 2011 & year(date) < 2015) %>%
+  arrange(date) %>%
+  mutate(
+    # Define the target variable: next day's return
+    next_return = lead(RET_msft, 1),
+    
+    # 5-period cumulative return factor for MSFT
+    ret_cum5 = rollsum(lag(RET_msft), k = 5, fill = NA),
+
+    # Ratio of the stock price to its 5-day moving average
+    ma5_ratio = lag(PRC_msft/rollmean(PRC_msft, k = 5, fill = NA) - 1,1),
+    
+    # 3-period cumulative return factor for AAPL (peer company)
+    aapl_cum3 = rollsum(lag(RET_aapl), k = 3, fill = NA)
+    
+  ) %>%
+  na.omit()
+
+# Build the final linear regression model
+final_model <- lm(next_return ~  ret_cum5 +
+                  ma5_ratio + aapl_cum3, 
+                  data = model_data)
+```
+
+$$
+\text{Next_Return} =\alpha + \beta_1 \times \text{ret_cum5} + \beta_2 \times \text{ma5_ratio} + \beta_3 \times \text{aapl_cum3} + \epsilon 
+$$
+
+#### 3）Model Forecasting and Evaluation on Testing Data
+
+```{r}
+# Read and prepare the dataset
+# data <- read.csv("MSFT.csv")
+
+# Convert the date column to Date format
+# data$date <- as.Date(data$date)
+
+# Split the data into training and testing sets
+training_data <- merged_data %>% 
+  filter(year(date) >= 2011 & year(date) < 2015) # Training data: 2011–2014
+
+testing_data <- merged_data %>%
+  filter(year(date) >= 2015 & year(date) < 2016) # Testing data: 2015
+
+# Prepare the testing dataset for forecasting
+forecast_data <- testing_data %>%
+  arrange(date) %>%
+  mutate(
+    next_return = lead(RET_msft, 1),
+    ret_cum5 = rollsum(lag(RET_msft), k = 5, fill = NA),
+    ma5_ratio = lag(PRC_msft/rollmean(PRC_msft, k = 5, fill = NA) - 1,1),
+    aapl_cum3 = rollsum(lag(RET_aapl), k = 3, fill = NA)
+  ) %>%
+  na.omit()
+
+# Generate predictions using the trained model
+forecast_data$predicted_return <- predict(final_model, newdata = forecast_data)
+forecast_data$error <- forecast_data$next_return - forecast_data$predicted_return
+
+# Analyze prediction errors
+error_summary <- summary(forecast_data$error)
+print(error_summary)
+
+# Calculate performance metrics
+rmse <- sqrt(mean(forecast_data$error^2)) # Root Mean Squared Error (RMSE)
+mae <- mean(abs(forecast_data$error)) # Mean Absolute Error (MAE)
+
+# Visualize actual vs. predicted returns
+ggplot(forecast_data, aes(x = date)) +
+  geom_line(aes(y = next_return, color = "Actual")) +
+  geom_line(aes(y = predicted_return, color = "Predicted")) +
+  labs(title = "Actual vs Predicted Returns",
+       x = "Date",
+       y = "Return") +
+  theme_minimal()
+
+# Visualize the distribution of prediction errors
+ggplot(forecast_data, aes(x = error)) +
+  geom_histogram(bins = 30, fill = "blue", alpha = 0.5) +
+  labs(title = "Distribution of Forecast Errors",
+       x = "Error",
+       y = "Count") +
+  theme_minimal()
+```
+
+**Takeways:**
+
+1.  The predicted returns align closely with actual returns, showing the model effectively captures the overall trend.
+
+2.  During high volatility periods, the model struggles to predict extreme spikes.
+
+3.  The majority of errors are concentrated near zero, indicating the model's predictions are unbiased on average.
+
+### Model Optimization
+
+```{r}
+# Filter the data to create a training dataset (2011–2014)
+merged_data <- msft %>%
+  inner_join(aapl, by = "date", suffix = c("_msft", "_aapl"))
+
+training_data <- merged_data %>%
+  filter(year(date) >= 2011 & year(date) < 2015)
+
+# Construct an extended feature set for training
+model_data_1 <- training_data %>%
+  filter(year(date) >= 2011 & year(date) < 2015) %>%
+  arrange(date) %>%
+  mutate(
+    # Define the target variable: next day's return for MSFT
+    next_return = lead(RET_msft, 1),
+    
+    # 1. MSFT-specific factors
+    # (1.1) Price momentum factors
+    ret_lag1 = RET_msft,  # Current return
+    ret_lag2 = lag(RET_msft, 1), # Lagged 1-period return
+    ret_lag3 = lag(RET_msft, 2), # Lagged 2-period return
+    ret_lag5 = lag(RET_msft, 4), # Lagged 4-period return
+    
+    # (1.2) Cumulative return factors
+    ret_cum3 = rollsum(RET_msft, k = 3, fill = NA), # 3-period cumulative return
+    ret_cum5 = rollsum(RET_msft, k = 5, fill = NA), # 5-period cumulative return
+    ret_cum10 = rollsum(RET_msft, k = 10, fill = NA), # 10-period cumulative return
+    
+    # (1.3) Price trend factors
+    ma5_ratio = PRC_msft/rollmean(PRC_msft, k = 5, fill = NA) - 1, # 5-day moving average ratio
+    ma10_ratio = PRC_msft/rollmean(PRC_msft, k = 10, fill = NA) - 1,# 10-day moving average ratio
+    ma20_ratio = PRC_msft/rollmean(PRC_msft, k = 20, fill = NA) - 1,# 20-day moving average ratio
+    
+    # (1.4) Volatility factors
+    vol_3d = rollapply(RET_msft, width = 3, FUN = sd, fill = NA), # 3-day volatility
+    vol_5d = rollapply(RET_msft, width = 5, FUN = sd, fill = NA), # 5-day volatility
+    vol_10d = rollapply(RET_msft, width = 10, FUN = sd, fill = NA), # 10-day volatility
+    
+     # (1.5) Volume factors
+    vol_ratio = VOL_msft/rollmean(VOL_msft, k = 20, fill = NA),  # Volume ratio to 20-day moving average
+    vol_trend = rollmean(VOL_msft, k = 5, fill = NA)/rollmean(VOL_msft, k = 20, fill = NA), # Volume trend ratio
+
+    #2. Market-related factors
+    market_lag1 = sprtrn_msft, # Current market return
+    market_lag2 = lag(sprtrn_msft, 1), # Lagged 1-period market return
+    market_cum3 = rollsum(sprtrn_msft, k = 3, fill = NA), # 3-period cumulative market return
+    
+    ## 3. Peer company factors (AAPL)
+    aapl_lag1 = RET_aapl, # Current return for AAPL
+    aapl_cum3 = rollsum(RET_aapl, k = 3, fill = NA) # 3-period cumulative return for AAPL
+   
+  ) %>%
+  na.omit()
+
+# Create a list of all feature names
+factors <- c("ret_lag1", "ret_lag2", "ret_lag3", "ret_lag5",
+             "ret_cum3", "ret_cum5", "ret_cum10",
+             "ma5_ratio", "ma10_ratio", "ma20_ratio",
+             "vol_3d", "vol_5d", "vol_10d",
+             "vol_ratio", "vol_trend",
+             "market_lag1", "market_lag2", "market_cum3",
+             "aapl_lag1", "aapl_cum3")
+
+# Calculate the correlation between features and the target variable
+correlations <- cor(model_data_1[factors], model_data_1$next_return)
+
+# Calculate the correlation matrix between features
+factor_cor_matrix <- cor(model_data_1[factors])
+
+# Select significant factors based on their correlation with the target variable
+significant_factors <- factors[abs(correlations) > 0.05]  # Threshold for correlation significance
+
+# Further refine the factors by removing highly correlated ones
+final_factors <- c()
+correlation_threshold <- 0.5
+
+for(factor in significant_factors) {
+ # Check if the current factor is highly correlated with any already selected factors
+  if(length(final_factors) == 0) {
+    final_factors <- c(final_factors, factor)
+  } else {
+    correlations_with_selected <- abs(factor_cor_matrix[factor, final_factors])
+    if(all(correlations_with_selected < correlation_threshold)) {
+      final_factors <- c(final_factors, factor)
+    }
+  }
+}
+# Construct the final linear regression model using the selected factors
+formula <- as.formula(paste("next_return ~", paste(final_factors, collapse = " + ")))
+final_model_1 <- lm(formula, data = model_data_1)
+
+# View the summary of the final model
+summary(final_model_1)
+```
+
+$$
+\text{Next_Return} =\alpha + \beta_1 \times \text{ret_cum3} +\beta_2 \times \text{ret_cum10} +\beta_3 \times \text{ma5_ratio} + \epsilon 
+$$
+
+**Takeways:**
+
+1.The model explains approximately 90.37% of the variance in the target variable,indicating excellent fit to the data.
+
+2.Key Predictors:
+
+```         
+ret_cum3: cumulative returns (3 periods) 
+
+ret_cum10: cumulative returns (10 periods)
+
+ma5_ratio: the 5-day moving average.
+```
+
+```{r}
+# Build predictive factors for the training dataset
+model_data_1 <- training_data %>%
+  filter(year(date) >= 2011 & year(date) < 2015) %>%
+  arrange(date) %>%
+  mutate(
+    next_return = lead(RET_msft, 1),
+    
+    # Cumulative returns
+    ret_cum3 = rollsum(RET_msft, k = 3, fill = NA),
+    ret_cum10 = rollsum(RET_msft, k = 10, fill = NA),
+
+    # Moving average ratio
+    ma5_ratio = PRC_msft/rollmean(PRC_msft, k = 5, fill = NA) - 1
+ 
+  ) %>%
+  na.omit()
+
+# Build the final linear regression model
+final_model_1 <- lm(next_return ~  ret_cum3 + ret_cum10+
+                  ma5_ratio, 
+                  data = model_data_1)
+```
+
+```{r}
+# Load the original dataset (assumes the data is stored in MSFT.csv)
+# data <- read.csv("MSFT.csv")
+
+# Convert the date column to Date format
+# data$date <- as.Date(data$date)
+
+# Split the dataset into training and testing sets
+training_data <- merged_data %>% 
+  filter(year(date) >= 2011 & year(date) < 2015)  # Training data: 2011–2014
+
+testing_data <- merged_data %>%
+  filter(year(date) >= 2015 & year(date) < 2016)  # Testing data: 2015
+
+# Prepare the testing dataset for forecasting
+forecast_data_1 <- testing_data %>%
+  arrange(date) %>%  # Sort data by date
+  mutate(
+    # Define the target variable: next day's return
+    next_return = lead(RET_msft, 1),
+    
+    # Cumulative returns
+    ret_cum3 = rollsum(RET_msft, k = 3, fill = NA),  # 3-period cumulative return
+    ret_cum10 = rollsum(RET_msft, k = 10, fill = NA),  # 10-period cumulative return
+
+    # Moving average ratio
+    ma5_ratio = PRC_msft / rollmean(PRC_msft, k = 5, fill = NA) - 1  # 5-day moving average ratio
+  ) %>%
+  na.omit()  
+
+# Generate predictions using the final model
+forecast_data_1$predicted_return <- predict(final_model_1, newdata = forecast_data_1)
+
+# Calculate prediction errors
+forecast_data_1$error <- forecast_data_1$next_return - forecast_data_1$predicted_return
+
+# Analyze prediction errors
+error_summary <- summary(forecast_data_1$error)  
+print(error_summary)  
+
+# Calculate performance metrics
+rmse <- sqrt(mean(forecast_data_1$error^2))  # Root Mean Squared Error (RMSE)
+mae <- mean(abs(forecast_data_1$error))  # Mean Absolute Error (MAE)
+
+# Visualize actual vs predicted returns
+ggplot(forecast_data_1, aes(x = date)) +
+  geom_line(aes(y = next_return, color = "Actual")) +  
+  geom_line(aes(y = predicted_return, color = "Predicted")) +  
+  labs(title = "Actual vs Predicted Returns", 
+       x = "Date",
+       y = "Return") +
+  theme_minimal()  
+
+# Visualize the distribution of forecast errors
+ggplot(forecast_data_1, aes(x = error)) +
+  geom_histogram(bins = 30, fill = "blue", alpha = 0.5) +  
+  labs(title = "Distribution of Forecast Errors",
+       x = "Error",
+       y = "Count") +
+  theme_minimal()  
+```
+
+**Takeways：**
+
+1.  The predicted returns closely follow the trend of actual returns.
+
+2.  The majority of forecast errors are concentrated near zero, indicating that the model’s predictions are generally unbiased and accurate.
+
+## Part 2. Trading Strategy
+
+### Data Preparation
+
+Load the data and prepare the training and test datasets.
+
+```{r}
+# Split data into training (2011–2015) and testing (2016–2020) periods
+training_data <- merged_data %>% filter(year(date) >= 2011 & year(date) < 2016)
+testing_data <- merged_data %>% filter(year(date) >= 2016 & year(date) <= 2020)
+```
+
+### Forecasting Returns
+
+Predict MSFT returns for the test period (2016-2020).
+
+```{r}
+# Prepare testing data with required features
+forecast_data <- testing_data %>%
+  arrange(date) %>%
+  mutate(
+    next_return = lead(RET_msft, 1),                     # target variable
+    ret_cum5 = rollsum(lag(RET_msft), k = 5, fill = NA), # factor 1
+    ma5_ratio = lag(PRC_msft / rollmean(PRC_msft, k = 5, fill = NA) - 1, 1), # factor 2
+    aapl_cum3 = rollsum(lag(RET_aapl), k = 3, fill = NA) # factor 3
+  ) %>%
+  na.omit()
+
+# Generate predictions
+forecast_data$predicted_return <- predict(final_model, newdata = forecast_data)
+forecast_data$error <- forecast_data$next_return - forecast_data$predicted_return
+
+error_summary <- summary(forecast_data$error)
+print(error_summary)
+
+rmse_msft <- sqrt(mean(forecast_data$error^2))
+mae_msft <- mean(abs(forecast_data$error))
+
+ggplot(forecast_data, aes(x = date)) +
+  geom_line(aes(y = next_return, color = "Actual")) +
+  geom_line(aes(y = predicted_return, color = "Predicted")) +
+  labs(title = "Actual vs Predicted Returns",
+       x = "Date",
+       y = "Return") +
+  theme_minimal()
+
+ggplot(forecast_data, aes(x = error)) +
+  geom_histogram(bins = 30, fill = "blue", alpha = 0.5) +
+  labs(title = "Distribution of Forecast Errors",
+       x = "Error",
+       y = "Count") +
+  theme_minimal()
+```
+
+**Takeways：**
+
+1.The predicted returns closely follow the actual returns over most periods.
+
+2.Significant deviations occur during periods of high volatility, such as in early 2020, likely due to market disruptions (e.g., COVID-19 pandemic).
+
+3.The majority of forecast errors are tightly clustered around zero, suggesting that the model's predictions are generally unbiased.
+
+### Trading Strategy
+
+Evaluate the trading strategies based on the forecast returns.
+
+```{r}
+# Implement trading strategy based on predicted returns
+forecast_data <- forecast_data %>%
+  arrange(date) %>%  # Sort the data by date
+  mutate(
+    # Position adjustment logic based on predicted returns
+    position = case_when(
+      predicted_return < -0.025 ~ 0,    # No position if predicted return < -2.5%
+      predicted_return >= -0.025 & predicted_return < -0.015 ~ 0.25, # 25% position for -2.5% ≤ return < -1.5%
+      predicted_return >= -0.015 & predicted_return < 0 ~ 0.5, # 50% position for -1.5% ≤ return < 0%
+      predicted_return >= 0 ~ 1  # Full position if predicted return ≥ 0%
+    ),
+    
+    # Daily returns based on the strategy
+    strategy_return = RET_msft * position,
+    
+    # Cumulative returns for the strategy
+    strategy_cumulative_return = cumprod(1 + strategy_return) - 1,
+    
+    # Cumulative returns for the S&P 500 index
+    sp500_cumulative_return = cumprod(1 + sprtrn_msft) - 1,
+    
+    # Cumulative returns for Microsoft stock
+    msft_cumulative_return = cumprod(1 + RET_msft) - 1
+  )
+
+# Output the final accumulated returns
+cat("Accumulated Returns:\n")
+cat("  Strategy: ", last(forecast_data$strategy_cumulative_return), "\n")  # Strategy cumulative return
+cat("  S&P 500: ", last(forecast_data$sp500_cumulative_return), "\n")  # S&P 500 cumulative return
+cat("  Microsoft: ", last(forecast_data$msft_cumulative_return), "\n\n")  # Microsoft cumulative return
+```
+
+**Takeway：**
+
+1.  The trading strategy achieved an accumulated return of 49.84, significantly outperforming both the S&P 500 index and Microsoft stock during the same period.
+
+2.  However, further testing and risk assessment are necessary.
+
+### Bet Sizing
+
+```{r}
+forecast_data <- forecast_data %>%
+  mutate(
+    # Scaling factor based on strategy_cumulative_return performance
+    scaling_factor = ifelse(
+      strategy_cumulative_return > 0, 
+      1 + 0.01 * strategy_cumulative_return,  # Increase position size for positive performance
+      1 - 0.01 * abs(strategy_cumulative_return)  # Slightly reduce position size for negative performance
+    ),
+
+    # Adjust daily returns using the scaling factor
+    scaled_daily_return = strategy_return * scaling_factor,
+
+    # Calculate the peak cumulative return for drawdown calculation
+    peak_strategy_cumulative_return = cummax(strategy_cumulative_return),
+
+    # Compute the drawdown (difference between peak and current cumulative return)
+    drawdown = peak_strategy_cumulative_return - strategy_cumulative_return,
+
+    # Apply drawdown control: reduce exposure by 10% if drawdown exceeds 20%
+    scaled_daily_return = ifelse(drawdown > 0.2, scaled_daily_return * 0.9, scaled_daily_return),
+
+    # Recalculate cumulative returns using the scaled daily returns
+    scaled_strategy_cumulative_return = cumprod(1 + scaled_daily_return) - 1
+  )
+
+# Display the final cumulative return after applying scaling
+cat("Scaled Cumulative Returns:\n")
+cat("Strategy with Scaling: ", last(forecast_data$scaled_strategy_cumulative_return), "\n")
+```
+
+**Takeways：**
+
+1.  The strategy with scaling achieved a scaled cumulative return of 89.98, showing a significant improvement compared to the unscaled strategy.
+
+## Part 3. Performance Evaluation
+
+### Performance Metrics
+
+```{r}
+# Annualized Sharpe Ratio 
+annualized_mean_return <- mean(forecast_data$strategy_return, na.rm = TRUE) * 252
+annualized_std_dev <- sd(forecast_data$strategy_return, na.rm = TRUE) * sqrt(252)
+annualized_sharpe_ratio <- annualized_mean_return / annualized_std_dev
+
+# Information Ratio
+excess_return <- forecast_data$strategy_return - forecast_data$sprtrn_msft
+annualized_mean_excess_return <- mean(excess_return, na.rm = TRUE) * 252
+annualized_std_dev_excess <- sd(excess_return, na.rm = TRUE) * sqrt(252)
+annualized_information_ratio <- annualized_mean_excess_return / annualized_std_dev_excess
+
+cat("Annualized Sharpe Ratio:", round(annualized_sharpe_ratio, 2), "\n")
+cat("Annualized Information Ratio:", round(annualized_information_ratio, 2), "\n")
+```
+
+**Takeways：**
+
+1.High Sharpe Ratio (3.69): It demonstrates the strategy's ability to generate high returns relative to its volatility
+
+2.Exceptional Information Ratio (4.47): It reflects the strategy's strong ability to generate returns above the benchmark (e.g., S&P 500)
+
+3.Both ratios suggest that the strategy not only produces high returns but also effectively manages risk.
+
+### Compare Cumulative Returns
+
+```{r}
+# Plot cumulative returns
+library(ggplot2)
+ggplot(forecast_data, aes(x = date)) +
+  geom_line(aes(y = strategy_cumulative_return, color = "Strategy")) +
+  geom_line(aes(y = sp500_cumulative_return, color = "S&P 500")) +
+  geom_line(aes(y = msft_cumulative_return, color = "Microsoft")) +
+  labs(title = "Cumulative Returns Comparison (2016-2020)",
+       x = "Date",
+       y = "Cumulative Return") +
+  theme_minimal() +
+  scale_color_manual(values = c("Strategy" = "blue", "S&P 500" = "red", "Microsoft" = "green"))
+```
+
+**Takeways:**
+
+1.The strategy (blue line) shows exponential growth in cumulative returns, reaching nearly 50 by 2020, far surpassing both Microsoft stock (green line) and the S&P 500 index (red line).
